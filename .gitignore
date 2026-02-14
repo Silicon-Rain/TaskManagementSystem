@@ -1,0 +1,54 @@
+# Ignore architecture diagram the user requested
+Architecture.png
+
+# Visual Studio / Rider / VS Code
+.vs/
+.vscode/
+.idea/
+*.suo
+*.user
+*.userosscache
+*.DotSettings
+
+# Build outputs
+bin/
+obj/
+out/
+artifacts/
+
+# NuGet
+*.nupkg
+packages/
+
+# Dotnet generated
+project.lock.json
+project.assets.json
+
+# Runtime / compiled files
+*.dll
+*.exe
+*.pdb
+
+# Databases
+*.mdf
+*.ldf
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs and temp
+*.log
+*.tmp
+*.temp
+*.cache
+
+# Environment / secrets
+.env
+secrets.json
+appsettings.Development.json
+appsettings.*.Local.json
+
+# OS
+Thumbs.db
+desktop.ini
+.DS_Store
