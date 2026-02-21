@@ -1,4 +1,4 @@
-namespace Shared.Models;
+namespace Shared.Events;
 
 public class TaskCreatedEvent
 {

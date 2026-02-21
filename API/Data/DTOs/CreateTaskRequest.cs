@@ -1,6 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 
-namespace API.Models.DTOs;
+namespace API.Data.DTOs;
 
 public class CreateTaskRequest
 {

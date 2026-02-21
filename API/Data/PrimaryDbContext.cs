@@ -1,6 +1,5 @@
 using Microsoft.EntityFrameworkCore;
-using Shared.Models;
-using API.Models;
+using API.Data.Entities;
 
 public class PrimaryDbContext : DbContext
 {

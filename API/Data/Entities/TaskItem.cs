@@ -1,4 +1,5 @@
-namespace Shared.Models;
+namespace API.Data.Entities;
+using Shared.Enums;
 
 public class TaskItem
 {

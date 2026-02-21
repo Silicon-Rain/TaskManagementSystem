@@ -1,6 +1,6 @@
-using Shared.Models;
+using Shared.Enums;
 
-namespace API.Models;
+namespace API.Data.Entities;
 
 public class OutboxMessage
 {

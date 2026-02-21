@@ -1,6 +1,1 @@
-using System;
-using Shared.Models;
-
-namespace Worker {
-    
-}
+Console.WriteLine("Worker running...");

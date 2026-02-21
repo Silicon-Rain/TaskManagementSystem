@@ -1,6 +1,14 @@
-using System;
-using Shared.Models;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 
-Console.WriteLine("Producer starting...");
-var t = new TaskItem { Title = "Sample task from Producer", Description = "Created by Producer" };
-Console.WriteLine($"Produced task: {t.Id} - {t.Title}");
+var builder = Host.CreateApplicationBuilder(args);
+
+builder.Services.AddDbContext<PrimaryDbContext>(options =>
+    options.UseNpgsql(builder.Configuration.GetConnectionString("PrimaryDb")));
+    
+builder.Services.AddHostedService<OutboxPublisherWorker>();
+
+var host = builder.Build();
+host.Run();

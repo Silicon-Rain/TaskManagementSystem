@@ -1,11 +1,10 @@
-using System.Collections.Generic;
-using System.Threading.Tasks;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
-using Shared.Models;
-using API.Models;
-using API.Models.DTOs;
+using Shared.Enums;
+using Shared.Events;
+using API.Data.Entities;
+using API.Data.DTOs;
 
 namespace API.Controllers;
 
