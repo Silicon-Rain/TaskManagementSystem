@@ -16,12 +16,13 @@ TaskCreated: Triggered when the user hits the POST endpoint.
 TaskStatusChanged: Triggered when the worker finishes the job.
 
 Consumer Groups:
-EmailService Group
-LoggingService Group
+task-processor-group
+api-status-updater-group
 
 Quick start (requires .NET SDK 8.0+):
 
 ```powershell
+docker compose up -d
 dotnet restore
 dotnet build
 dotnet run --project API
