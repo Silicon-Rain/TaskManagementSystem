@@ -53,7 +53,7 @@ public class OutboxPublisherWorker : BackgroundService
             _logger.LogInformation("Publishing message {Id} of type {Type}", message.Id, message.Type);
 
             var kafkaMessage = new Message<string, string> { 
-                Key = message.Id.ToString(), 
+                Key = message.AggregateId.ToString(), 
                 Value = message.Data 
             };
 

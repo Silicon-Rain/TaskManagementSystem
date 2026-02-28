@@ -5,6 +5,7 @@ using Shared.Enums;
 using Shared.Events;
 using API.Data.Entities;
 using API.Data.DTOs;
+using Shared.Messages;
 
 namespace API.Controllers;
 
@@ -45,6 +46,7 @@ public class TasksController : ControllerBase
 
         var outbox = new OutboxMessage
         {
+            AggregateId = item.Id,
             Type = EventType.TaskCreated,
             Data = JsonSerializer.Serialize(new TaskCreatedEvent { TaskId = item.Id, Title = item.Title, Description = item.Description })
         };

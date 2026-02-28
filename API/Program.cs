@@ -11,6 +11,8 @@ builder.Services.AddControllers()
 builder.Services.AddDbContext<PrimaryDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("PrimaryDb")));
 
+builder.Services.AddHostedService<TaskStatusUpdateWorker>();
+
 var app = builder.Build();
 
 app.MapControllers();
