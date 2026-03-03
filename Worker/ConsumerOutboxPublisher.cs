@@ -1,18 +1,19 @@
 using Confluent.Kafka;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using Worker.Data;
+using Persistence;
 
 public class ConsumerOutboxPublisher : BackgroundService
 {
     private readonly IServiceProvider _serviceProvider;
     private readonly IProducer<string, string> _producer;
 
-    public ConsumerOutboxPublisher(IServiceProvider serviceProvider)
+    public ConsumerOutboxPublisher(IServiceProvider serviceProvider, IConfiguration configuration)
     {
         _serviceProvider = serviceProvider;
-        var config = new ProducerConfig { BootstrapServers = "localhost:9092" };
+        var config = new ProducerConfig { BootstrapServers = configuration["Kafka:BootstrapServers"] };
         _producer = new ProducerBuilder<string, string>(config).Build();
     }
 

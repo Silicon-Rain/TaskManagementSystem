@@ -1,6 +1,8 @@
 using Microsoft.EntityFrameworkCore;
-using API.Data.Entities;
+using Shared.Entities;
 using Shared.Messages;
+
+namespace Persistence;
 
 public class PrimaryDbContext : DbContext
 {

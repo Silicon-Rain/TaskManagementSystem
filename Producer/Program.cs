@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Persistence;
 
 var builder = Host.CreateApplicationBuilder(args);
 
@@ -11,4 +12,5 @@ builder.Services.AddDbContext<PrimaryDbContext>(options =>
 builder.Services.AddHostedService<OutboxPublisherWorker>();
 
 var host = builder.Build();
+
 host.Run();

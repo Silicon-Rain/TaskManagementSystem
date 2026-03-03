@@ -1,5 +1,6 @@
-namespace API.Data.Entities;
-using Shared.Enums;
+using TaskStatus = Shared.Enums.TaskStatus;
+
+namespace Shared.Entities;
 
 public class TaskItem
 {

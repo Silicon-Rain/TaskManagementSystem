@@ -2,23 +2,26 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Confluent.Kafka;
 using Shared.Events;
+using Persistence;
 
 public class TaskStatusUpdateWorker : BackgroundService
 {
     private readonly IServiceProvider _serviceProvider;
     private readonly ILogger<TaskStatusUpdateWorker> _logger;
+    private readonly IConfiguration _configuration;
 
-    public TaskStatusUpdateWorker(IServiceProvider serviceProvider, ILogger<TaskStatusUpdateWorker> logger)
+    public TaskStatusUpdateWorker(IServiceProvider serviceProvider, ILogger<TaskStatusUpdateWorker> logger, IConfiguration configuration)
     {
         _serviceProvider = serviceProvider;
         _logger = logger;
+        _configuration = configuration;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var config = new ConsumerConfig
         {
-            BootstrapServers = "localhost:9092",
+            BootstrapServers = _configuration["Kafka:BootstrapServers"],
             GroupId = "api-status-updater-group",
             AutoOffsetReset = AutoOffsetReset.Earliest,
             EnableAutoCommit = false

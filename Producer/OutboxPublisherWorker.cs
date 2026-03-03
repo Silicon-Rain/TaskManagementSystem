@@ -1,22 +1,24 @@
 using Confluent.Kafka;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Persistence;
 
 public class OutboxPublisherWorker : BackgroundService
 {
     private readonly IServiceProvider _serviceProvider;
     private readonly ILogger<OutboxPublisherWorker> _logger;
-    private readonly IProducer<string, string> _kafkaProducer;  
+    private readonly IProducer<string, string> _kafkaProducer;
     private const string TopicName = "task-events";
 
-    public OutboxPublisherWorker(IServiceProvider serviceProvider, ILogger<OutboxPublisherWorker> logger)
+    public OutboxPublisherWorker(IServiceProvider serviceProvider, ILogger<OutboxPublisherWorker> logger, IConfiguration configuration)
     {
         _serviceProvider = serviceProvider;
         _logger = logger;
 
-        var config = new ProducerConfig { BootstrapServers = "localhost:9092" };
+        var config = new ProducerConfig { BootstrapServers = configuration["Kafka:BootstrapServers"] };
         _kafkaProducer = new ProducerBuilder<string, string>(config).Build();
     }
 

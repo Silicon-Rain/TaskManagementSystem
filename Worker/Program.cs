@@ -2,7 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using Worker.Data;
+using Persistence;
 
 var builder = Host.CreateApplicationBuilder(args);
 
@@ -13,4 +13,19 @@ builder.Services.AddHostedService<TaskProcessorWorker>();
 builder.Services.AddHostedService<ConsumerOutboxPublisher>();
 
 var host = builder.Build();
+
+using (var scope = host.Services.CreateScope())
+{
+	try
+	{
+		var db = scope.ServiceProvider.GetRequiredService<SecondaryDbContext>();
+    	await db.Database.MigrateAsync();
+		Console.WriteLine("Database:TaskWorkerDb migrated successfully.");
+	}
+    catch (Exception ex)
+	{
+		Console.WriteLine($"Migration failed: {ex.Message}");
+	}
+}
+
 host.Run();

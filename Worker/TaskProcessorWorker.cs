@@ -8,7 +8,8 @@ using Microsoft.Extensions.Logging;
 using Shared.Enums;
 using Shared.Events;
 using Shared.Messages;
-using Worker.Data;
+using Persistence;
+using Microsoft.Extensions.Configuration;
 
 public class TaskProcessorWorker : BackgroundService
 {
@@ -16,14 +17,14 @@ public class TaskProcessorWorker : BackgroundService
     private readonly ILogger<TaskProcessorWorker> _logger;
     private readonly IConsumer<string, string> _consumer;
 
-    public TaskProcessorWorker(IServiceProvider serviceProvider, ILogger<TaskProcessorWorker> logger)
+    public TaskProcessorWorker(IServiceProvider serviceProvider, ILogger<TaskProcessorWorker> logger, IConfiguration configuration)
     {
         _serviceProvider = serviceProvider;
         _logger = logger;
 
         var config = new ConsumerConfig
         {
-            BootstrapServers = "localhost:9092",
+            BootstrapServers = configuration["Kafka:BootstrapServers"],
             GroupId = "task-processor-group",
             AutoOffsetReset = AutoOffsetReset.Earliest,
             EnableAutoCommit = false

@@ -3,9 +3,10 @@ using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
 using Shared.Enums;
 using Shared.Events;
-using API.Data.Entities;
+using Shared.Entities;
 using API.Data.DTOs;
 using Shared.Messages;
+using Persistence;
 
 namespace API.Controllers;
 
