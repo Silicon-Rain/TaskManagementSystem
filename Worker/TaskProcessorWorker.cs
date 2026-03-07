@@ -63,6 +63,8 @@ public class TaskProcessorWorker : BackgroundService
         {
             using var scope = _scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<SecondaryDbContext>();
+
+            _logger.LogInformation("Processing task {Offset} in parallel...", result.Offset);
             
             var taskId = Guid.Parse(result.Message.Key);
             
@@ -108,6 +110,7 @@ public class TaskProcessorWorker : BackgroundService
                 await transaction.CommitAsync(stoppingToken);
 
                 consumer.StoreOffset(result);
+                _logger.LogInformation("Storing offset for task {TaskId}", taskId);
                 consumer.Commit(result);
                 _logger.LogInformation("Task {TaskId} processed and status update queued.", taskId);
             }
@@ -140,5 +143,6 @@ public class TaskProcessorWorker : BackgroundService
 
         await db.SaveChangesAsync();
         consumer.StoreOffset(result);
+        _logger.LogInformation("Storing offset for failed task {TaskId}", taskId);
     }
 }
