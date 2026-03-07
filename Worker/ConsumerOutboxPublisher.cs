@@ -4,6 +4,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Persistence;
+using Shared.Enums;
 
 public class ConsumerOutboxPublisher : BackgroundService
 {
@@ -33,7 +34,11 @@ public class ConsumerOutboxPublisher : BackgroundService
                 await _producer.ProduceAsync("task-events", new Message<string, string> 
                 { 
                     Key = msg.AggregateId.ToString(), 
-                    Value = msg.Data 
+                    Value = msg.Data,
+                    Headers = new Headers
+                    {
+                        {"EventType", System.Text.Encoding.UTF8.GetBytes(msg.Type.ToString())}
+                    }  
                 });
                 msg.ProcessedOn = DateTime.UtcNow;
             }

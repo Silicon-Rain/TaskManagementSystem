@@ -10,12 +10,16 @@ using Shared.Events;
 using Shared.Messages;
 using Persistence;
 using Microsoft.Extensions.Configuration;
+using Polly.Retry;
+using Polly;
+using Npgsql;
 
 public class TaskProcessorWorker : BackgroundService
 {
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<TaskProcessorWorker> _logger;
     private readonly IConfiguration _configuration;
+    private readonly AsyncRetryPolicy _retryPolicy;
     private readonly SemaphoreSlim _semaphore;
     private const int MaxConcurrentTasks = 5;
 
@@ -25,6 +29,17 @@ public class TaskProcessorWorker : BackgroundService
         _logger = logger;
         _configuration = configuration;
         _semaphore = new SemaphoreSlim(MaxConcurrentTasks);
+
+        _retryPolicy = Policy
+            .Handle<DbUpdateException>()
+            .Or<NpgsqlException>()
+            .WaitAndRetryAsync(3,
+                retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)), // 2s, 4s, 8s
+                (exception, timeSpan, retryCount, context) => 
+                {
+                    _logger.LogWarning("Retry {Count} after {Delay}s due to: {Message}", 
+                        retryCount, timeSpan.TotalSeconds, exception.Message);
+                });
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -48,12 +63,25 @@ public class TaskProcessorWorker : BackgroundService
 
         while (!stoppingToken.IsCancellationRequested)
         {
-            var result = consumer.Consume(stoppingToken);
-            if (result == null) continue;
+            try
+            {
+                var result = consumer.Consume(stoppingToken);
+                if (result == null) continue;
 
-            await _semaphore.WaitAsync(stoppingToken);
+                await _semaphore.WaitAsync(stoppingToken);
 
-            _ = ProcessMessageAsync(consumer, result, serializerOptions, stoppingToken);
+                _ = ProcessMessageAsync(consumer, result, serializerOptions, stoppingToken);                
+            }
+            catch (ConsumeException e) when (e.Error.Code == ErrorCode.UnknownTopicOrPart)
+            {
+                _logger.LogWarning("Topic 'task-events' not ready yet. Retrying in 5s...");
+                await Task.Delay(5000, stoppingToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Kafka encountered an error. Backing off...");
+                await Task.Delay(5000, stoppingToken); 
+            }
         }
     }
 
@@ -61,66 +89,86 @@ public class TaskProcessorWorker : BackgroundService
     {
         try
         {
-            using var scope = _scopeFactory.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<SecondaryDbContext>();
-
-            _logger.LogInformation("Processing task {Offset} in parallel...", result.Offset);
-            
-            var taskId = Guid.Parse(result.Message.Key);
-            
-            if (await db.InboxMessages.AnyAsync(x => x.AggregateId == taskId && x.Type == EventType.TaskCreated))
+            await _retryPolicy.ExecuteAsync(async () =>
             {
-                _logger.LogWarning("Task {TaskId} already processed. Skipping.", taskId);
-                consumer.StoreOffset(result);
-                consumer.Commit(result);
-                return;
-            }
+                using var scope = _scopeFactory.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<SecondaryDbContext>();
 
-            await using var transaction = await db.Database.BeginTransactionAsync(stoppingToken);
-            try
-            {
-                db.OutboxMessages.Add(new OutboxMessage {
-                    AggregateId = taskId,
-                    Type = EventType.TaskStatusChanged,
-                    Data = JsonSerializer.Serialize(new TaskStatusChangedEvent { TaskId = taskId, NewStatus = Shared.Enums.TaskStatus.Processing }, serializerOptions)
-                });
-                await db.SaveChangesAsync(stoppingToken);
+                _logger.LogInformation("Processing task {Offset} in parallel...", result.Offset);
+                
+                var taskId = Guid.Parse(result.Message.Key);
 
-                //SIMULATE BUSINESS LOGIC (Email/Logs)
-                _logger.LogInformation("Processing Task {TaskId}...", taskId);
-                await Task.Delay(1000, stoppingToken); // Simulate work
-
-                db.InboxMessages.Add(new InboxMessage 
-                { 
-                    AggregateId = taskId, 
-                    Type = EventType.TaskCreated, 
-                    ReceivedOn = DateTime.UtcNow,
-                    ProcessedOn = DateTime.UtcNow 
-                });                
-
-                var statusUpdate = new OutboxMessage
+                var typeHeader = result.Message.Headers.GetLastBytes("EventType");
+                var eventType = typeHeader != null ? System.Text.Encoding.UTF8.GetString(typeHeader) : null;
+                if(eventType == null || eventType != EventType.TaskCreated.ToString())
                 {
-                    AggregateId = taskId,
-                    Type = EventType.TaskStatusChanged,
-                    Data = JsonSerializer.Serialize(new TaskStatusChangedEvent { TaskId = taskId, NewStatus = Shared.Enums.TaskStatus.Completed }, serializerOptions),
-                };
-                db.OutboxMessages.Add(statusUpdate);
+                    _logger.LogWarning("Received unsupported event type {EventType} for task {TaskId} while trying to process task. Skipping.", eventType, taskId);
+                    consumer.StoreOffset(result);
+                    consumer.Commit(result);
+                    return;
+                }
+                
+                if (await db.InboxMessages.AnyAsync(x => x.AggregateId == taskId && x.Type == EventType.TaskCreated))
+                {
+                    _logger.LogWarning("Task {TaskId} already processed. Skipping.", taskId);
+                    consumer.StoreOffset(result);
+                    consumer.Commit(result);
+                    return;
+                }
 
-                await db.SaveChangesAsync(stoppingToken);
-                await transaction.CommitAsync(stoppingToken);
+                await using var transaction = await db.Database.BeginTransactionAsync(stoppingToken);
+                try
+                {
+                    db.OutboxMessages.Add(new OutboxMessage {
+                        AggregateId = taskId,
+                        Type = EventType.TaskStatusChanged,
+                        Data = JsonSerializer.Serialize(new TaskStatusChangedEvent { TaskId = taskId, NewStatus = Shared.Enums.TaskStatus.Processing }, serializerOptions)
+                    });
+                    await db.SaveChangesAsync(stoppingToken);
 
-                consumer.StoreOffset(result);
-                _logger.LogInformation("Storing offset for task {TaskId}", taskId);
-                consumer.Commit(result);
-                _logger.LogInformation("Task {TaskId} processed and status update queued.", taskId);
-            }
-            catch (Exception ex)
-            {
-                await transaction.RollbackAsync(stoppingToken);
-                _logger.LogError(ex, "Error processing Task {TaskId}", taskId);
+                    //SIMULATE BUSINESS LOGIC (Email/Logs)
+                    _logger.LogInformation("Processing Task {TaskId}...", taskId);
+                    await Task.Delay(1000, stoppingToken); // Simulate work
 
-                await ReportFailure(taskId, consumer, result, serializerOptions);
-            }
+                    db.InboxMessages.Add(new InboxMessage 
+                    { 
+                        AggregateId = taskId, 
+                        Type = EventType.TaskCreated, 
+                        ReceivedOn = DateTime.UtcNow,
+                        ProcessedOn = DateTime.UtcNow 
+                    });                
+
+                    var statusUpdate = new OutboxMessage
+                    {
+                        AggregateId = taskId,
+                        Type = EventType.TaskStatusChanged,
+                        Data = JsonSerializer.Serialize(new TaskStatusChangedEvent { TaskId = taskId, NewStatus = Shared.Enums.TaskStatus.Completed }, serializerOptions),
+                    };
+                    db.OutboxMessages.Add(statusUpdate);
+
+                    await db.SaveChangesAsync(stoppingToken);
+                    await transaction.CommitAsync(stoppingToken);
+
+                    consumer.StoreOffset(result);
+                    _logger.LogInformation("Storing offset for task {TaskId}", taskId);
+                    consumer.Commit(result);
+                    _logger.LogInformation("Task {TaskId} processed and status update queued.", taskId);
+                }
+                catch (Exception ex)
+                {
+                    await transaction.RollbackAsync(stoppingToken);
+                    _logger.LogError(ex, "Error processing Task {TaskId}", taskId);
+
+                    await ReportFailure(taskId, consumer, result, serializerOptions);
+                    throw;
+                }
+            });            
+        }
+        catch (Exception ex)
+        {
+            _logger.LogCritical(ex, "Permanent failure for task {Offset}. Reporting failure.", result.Offset);
+            var taskId = Guid.Parse(result.Message.Key);
+            await ReportFailure(taskId, consumer, result, serializerOptions);
         }
         finally
         {

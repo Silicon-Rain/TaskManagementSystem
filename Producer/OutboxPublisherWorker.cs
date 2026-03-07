@@ -56,7 +56,11 @@ public class OutboxPublisherWorker : BackgroundService
 
             var kafkaMessage = new Message<string, string> { 
                 Key = message.AggregateId.ToString(), 
-                Value = message.Data 
+                Value = message.Data,
+                Headers = new Headers
+                {
+                    {"EventType", System.Text.Encoding.UTF8.GetBytes(message.Type.ToString())}
+                } 
             };
 
             await _kafkaProducer.ProduceAsync(TopicName, kafkaMessage, stoppingToken);

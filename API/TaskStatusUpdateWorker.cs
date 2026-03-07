@@ -3,6 +3,7 @@ using System.Text.Json.Serialization;
 using Confluent.Kafka;
 using Shared.Events;
 using Persistence;
+using Shared.Enums;
 
 public class TaskStatusUpdateWorker : BackgroundService
 {
@@ -35,6 +36,17 @@ public class TaskStatusUpdateWorker : BackgroundService
             try
             {
                 var result = consumer.Consume(stoppingToken);
+                var taskId = Guid.Parse(result.Message.Key);
+
+                var typeHeader = result.Message.Headers.GetLastBytes("EventType");
+                var eventType = typeHeader != null ? System.Text.Encoding.UTF8.GetString(typeHeader) : null;
+                if(eventType == null || eventType != EventType.TaskCreated.ToString())
+                {
+                    _logger.LogWarning("Received unsupported event type {EventType} for task {TaskId} while trying to update task status. Skipping.", eventType, taskId);
+                    consumer.StoreOffset(result);
+                    consumer.Commit(result);
+                    return;
+                }
             
                 if (result != null && result.Message.Value.Contains("NewStatus")) 
                 {
