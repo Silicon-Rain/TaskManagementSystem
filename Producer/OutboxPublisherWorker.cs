@@ -52,22 +52,31 @@ public class OutboxPublisherWorker : BackgroundService
 
         foreach (var message in messages)
         {
-            _logger.LogInformation("Publishing message {Id} of type {Type}", message.Id, message.Type);
+            try
+            {
+                _logger.LogInformation("Publishing message {Id} of type {Type}", message.Id, message.Type);
 
-            var kafkaMessage = new Message<string, string> { 
-                Key = message.AggregateId.ToString(), 
-                Value = message.Data,
-                Headers = new Headers
-                {
-                    {"EventType", System.Text.Encoding.UTF8.GetBytes(message.Type.ToString())}
-                } 
-            };
+                var kafkaMessage = new Message<string, string> { 
+                    Key = message.AggregateId.ToString(), 
+                    Value = message.Data,
+                    Headers = new Headers
+                    {
+                        {"EventType", System.Text.Encoding.UTF8.GetBytes(message.Type.ToString())}
+                    } 
+                };
 
-            await _kafkaProducer.ProduceAsync(TopicName, kafkaMessage, stoppingToken);
+                await _kafkaProducer.ProduceAsync(TopicName, kafkaMessage, stoppingToken);
 
-            message.ProcessedOn = DateTime.UtcNow;
+                message.ProcessedOn = DateTime.UtcNow;
+                await db.SaveChangesAsync(stoppingToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to publish message {MessageId}. Will retry later.", message.Id);
+                break;
+            }
         }
 
-        await db.SaveChangesAsync(stoppingToken);
+        await Task.Delay(5000, stoppingToken);
     }
 }

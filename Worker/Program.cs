@@ -3,6 +3,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Persistence;
+using Worker;
 
 var builder = Host.CreateApplicationBuilder(args);
 
@@ -11,6 +12,7 @@ builder.Services.AddDbContext<SecondaryDbContext>(options =>
 
 builder.Services.AddHostedService<TaskProcessorWorker>();
 builder.Services.AddHostedService<ConsumerOutboxPublisher>();
+builder.Services.AddScoped<ITaskService, TaskService>();
 
 var host = builder.Build();
 

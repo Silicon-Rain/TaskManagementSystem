@@ -4,18 +4,38 @@ using Confluent.Kafka;
 using Shared.Events;
 using Persistence;
 using Shared.Enums;
+using Polly.Retry;
+using Polly;
+using Microsoft.EntityFrameworkCore;
+using Npgsql;
+using API;
+using System.Text;
 
 public class TaskStatusUpdateWorker : BackgroundService
 {
-    private readonly IServiceProvider _serviceProvider;
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<TaskStatusUpdateWorker> _logger;
     private readonly IConfiguration _configuration;
+    private readonly AsyncRetryPolicy _retryPolicy;
+    private readonly SemaphoreSlim _semaphore;
+    private readonly IProducer<string, string> _dlqProducer;
+    private const int MaxConcurrentUpdates = 5;
+    private const string DlqTopic = "task-status-updates-failed";
 
-    public TaskStatusUpdateWorker(IServiceProvider serviceProvider, ILogger<TaskStatusUpdateWorker> logger, IConfiguration configuration)
+    public TaskStatusUpdateWorker(IServiceScopeFactory scopeFactory, ILogger<TaskStatusUpdateWorker> logger, IConfiguration configuration)
     {
-        _serviceProvider = serviceProvider;
+        _scopeFactory = scopeFactory;
         _logger = logger;
         _configuration = configuration;
+        _semaphore = new SemaphoreSlim(MaxConcurrentUpdates);
+
+        _retryPolicy = Policy
+            .Handle<DbUpdateException>()
+            .Or<NpgsqlException>()
+            .WaitAndRetryAsync(3, i => TimeSpan.FromSeconds(Math.Pow(2, i)));
+
+        var pConfig = new ProducerConfig { BootstrapServers = _configuration["Kafka:BootstrapServers"] };
+        _dlqProducer = new ProducerBuilder<string, string>(pConfig).Build();
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -25,7 +45,8 @@ public class TaskStatusUpdateWorker : BackgroundService
             BootstrapServers = _configuration["Kafka:BootstrapServers"],
             GroupId = "api-status-updater-group",
             AutoOffsetReset = AutoOffsetReset.Earliest,
-            EnableAutoCommit = false
+            EnableAutoCommit = false,
+            EnableAutoOffsetStore = false
         };
 
         using var consumer = new ConsumerBuilder<string, string>(config).Build();
@@ -36,53 +57,32 @@ public class TaskStatusUpdateWorker : BackgroundService
             try
             {
                 var result = consumer.Consume(stoppingToken);
+                if(result == null || result.Message == null)
+                    continue;
+
                 var taskId = Guid.Parse(result.Message.Key);
 
                 var typeHeader = result.Message.Headers.GetLastBytes("EventType");
-                var eventType = typeHeader != null ? System.Text.Encoding.UTF8.GetString(typeHeader) : null;
-                if(eventType == null || eventType != EventType.TaskCreated.ToString())
+                var eventType = typeHeader != null ? Encoding.UTF8.GetString(typeHeader) : null;
+                if(eventType == null || eventType != EventType.TaskStatusChanged.ToString())
                 {
                     _logger.LogWarning("Received unsupported event type {EventType} for task {TaskId} while trying to update task status. Skipping.", eventType, taskId);
                     consumer.StoreOffset(result);
                     consumer.Commit(result);
-                    return;
+                    continue;
                 }
-            
-                if (result != null && result.Message.Value.Contains("NewStatus")) 
+                
+                var options = new JsonSerializerOptions { Converters = { new JsonStringEnumConverter() } };
+                var statusEvent = JsonSerializer.Deserialize<TaskStatusChangedEvent>(result.Message.Value, options);
+
+                if (statusEvent == null)
                 {
-                    using var scope = _serviceProvider.CreateScope();
-                    var db = scope.ServiceProvider.GetRequiredService<PrimaryDbContext>();
-                    
-                    var options = new JsonSerializerOptions { Converters = { new JsonStringEnumConverter() } };
-                    var statusEvent = JsonSerializer.Deserialize<TaskStatusChangedEvent>(result.Message.Value, options);
-
-                    if (statusEvent == null)
-                    {
-                        _logger.LogWarning("Failed to deserialize TaskStatusChangedEvent from message");
-                        continue;
-                    }
-
-                    var task = await db.Tasks.FindAsync([statusEvent.TaskId], stoppingToken);
-                    if (task != null)
-                    {
-                        // ONLY update if it's a "forward" progression
-                        bool isValidUpdate = (task.Status, statusEvent.NewStatus) switch
-                        {
-                            (Shared.Enums.TaskStatus.Pending, _) => true, // Pending can move to anything
-                            (Shared.Enums.TaskStatus.Processing, Shared.Enums.TaskStatus.Completed) => true,
-                            (Shared.Enums.TaskStatus.Processing, Shared.Enums.TaskStatus.Failed) => true,
-                            _ => false
-                        };
-
-                        if (isValidUpdate)
-                        {
-                            task.Status = statusEvent.NewStatus;
-                            await db.SaveChangesAsync(stoppingToken);
-                            _logger.LogInformation("Updated Task {Id} to {Status}", task.Id, task.Status);
-                        }
-                    }
+                    _logger.LogWarning("Failed to deserialize TaskStatusChangedEvent from message");
+                    continue;
                 }
-                consumer.Commit(result);
+
+                await _semaphore.WaitAsync(stoppingToken);
+                _ = ProcessUpdateAsync(consumer, result, statusEvent, stoppingToken);
             }
             catch (ConsumeException ex) when (ex.Error.Reason.Contains("Unknown topic"))
             {
@@ -99,5 +99,45 @@ public class TaskStatusUpdateWorker : BackgroundService
                 await Task.Delay(5000, stoppingToken);
             }            
         }
+    }
+    
+    private async Task ProcessUpdateAsync(IConsumer<string, string> consumer, ConsumeResult<string, string> result, TaskStatusChangedEvent? taskStatusChangedEvent, CancellationToken ct)
+    {
+        var taskId = Guid.Parse(result.Message.Key);
+        try
+        {
+            await _retryPolicy.ExecuteAsync(async () =>
+            {
+                using var scope = _scopeFactory.CreateScope();
+                var updateService = scope.ServiceProvider.GetRequiredService<ITaskUpdateService>();
+
+                if (taskStatusChangedEvent != null)
+                {
+                    await updateService.UpdateStatusAsync(taskId, taskStatusChangedEvent, ct);
+                }
+
+                consumer.StoreOffset(result);
+                consumer.Commit(result);
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogCritical(ex, "Failed to update status for {TaskId}. Ejecting to DLQ.", taskId);
+            await SendToDlq(result, ex.Message);
+            
+            consumer.StoreOffset(result);
+            consumer.Commit(result);
+        }
+        finally
+        {
+            _semaphore.Release();
+        }
+    }
+
+    private async Task SendToDlq(ConsumeResult<string, string> result, string error)
+    {
+        var msg = new Message<string, string> { Key = result.Message.Key, Value = result.Message.Value, Headers = result.Message.Headers };
+        msg.Headers.Add("Error", Encoding.UTF8.GetBytes(error));
+        await _dlqProducer.ProduceAsync(DlqTopic, msg);
     }
 }

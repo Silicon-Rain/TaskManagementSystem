@@ -1,3 +1,4 @@
+using API;
 using Microsoft.EntityFrameworkCore;
 using Persistence;
 
@@ -13,6 +14,7 @@ builder.Services.AddDbContext<PrimaryDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("PrimaryDb")));
 
 builder.Services.AddHostedService<TaskStatusUpdateWorker>();
+builder.Services.AddScoped<ITaskUpdateService, TaskUpdateService>();
 
 var app = builder.Build();
 
