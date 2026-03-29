@@ -127,7 +127,6 @@ public class TaskProcessorWorker : BackgroundService
             catch (Exception dbEx)
             {
                 _logger.LogError(dbEx, "Database is DOWN. Proceeding to Kafka DLQ only.");
-                return;
             }     
 
             await SendToDlq(result, ex.Message);       
